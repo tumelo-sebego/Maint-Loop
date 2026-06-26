@@ -20,21 +20,35 @@ const DataLog = mongoose.model('DataLog', DataLogSchema);
 // ==========================================
 // 1. PI AGENT CUSTOM TOOLS CONFIGURATION
 // ==========================================
+// ==========================================
+// 1. PI AGENT CUSTOM TOOLS CONFIGURATION
+// ==========================================
 const fetchExternalApiTool = {
   name: 'fetch_external_api',
   description: 'Fetch raw data from any public HTTP API endpoint URL.',
-  execute: async (_toolCallId, args) => {
-    console.log(`Executing Pi Tool [fetch_external_api] for: ${args.url}`);
-    const res = await fetch(args.url);
-    const textOutput = await res.text();
-    return { content: [{ type: "text", text: textOutput }] };
+  parameters: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'The complete endpoint URL string to scrape or request data from' }
+    },
+    required: ['url']
+  },
+  execute: async (args) => {
+    const { url } = args;
+    console.log(`Executing Pi Tool [fetch_external_api] for: ${url}`);
+    try {
+      const res = await fetch(url);
+      const textOutput = await res.text();
+      return textOutput;
+    } catch (err) {
+      return `API Fetch Error: ${err.message}`;
+    }
   }
 };
 
 const writeToDatabaseTool = {
   name: 'write_to_database',
   description: 'Store or update data records inside the database repository.',
-  // Pi utilizes TypeBox / JSON Schema syntax to evaluate and bind tools safely
   parameters: {
     type: 'object',
     properties: {
@@ -43,16 +57,11 @@ const writeToDatabaseTool = {
     },
     required: ['targetCollection', 'dataObject']
   },
-  // Ensure the execution hook captures parameters exactly as Pi streams them
   execute: async (args) => {
     const { targetCollection, dataObject } = args;
     console.log(`⚡ [Pi Executor Callback]: Writing to MongoDB -> ${targetCollection}`);
-    
     try {
-      const newRecord = new DataLog({ 
-        collectionName: targetCollection, 
-        payload: dataObject 
-      });
+      const newRecord = new DataLog({ collectionName: targetCollection, payload: dataObject });
       const savedDoc = await newRecord.save();
       return `Success: Saved document to ${targetCollection} under reference ID: ${savedDoc._id}`;
     } catch (err) {
@@ -64,11 +73,22 @@ const writeToDatabaseTool = {
 const readLatestDatabaseEntryTool = {
   name: 'read_latest_database_entry',
   description: 'Query the most recent record matching a collection identifier to check for sync status.',
-  execute: async (_toolCallId, args) => {
-    console.log(`Executing Pi Tool [read_latest_database_entry] for: ${args.targetCollection}`);
-    const latest = await DataLog.findOne({ collectionName: args.targetCollection }).sort({ timestamp: -1 });
-    const textOutput = latest ? JSON.stringify(latest.payload) : JSON.stringify({ message: "No records found." });
-    return { content: [{ type: "text", text: textOutput }] };
+  parameters: {
+    type: 'object',
+    properties: {
+      targetCollection: { type: 'string', description: 'Name classification of the targeted database collection' }
+    },
+    required: ['targetCollection']
+  },
+  execute: async (args) => {
+    const { targetCollection } = args;
+    console.log(`Executing Pi Tool [read_latest_database_entry] for: ${targetCollection}`);
+    try {
+      const latest = await DataLog.findOne({ collectionName: targetCollection }).sort({ timestamp: -1 });
+      return latest ? JSON.stringify(latest.payload) : JSON.stringify({ message: "No records found." });
+    } catch (err) {
+      return `Database Read Failure: ${err.message}`;
+    }
   }
 };
 
