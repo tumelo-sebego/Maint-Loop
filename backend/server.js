@@ -62,41 +62,48 @@ const piToolsList = [fetchExternalApiTool, writeToDatabaseTool, readLatestDataba
 // 2. THE PI RUNTIME STRATEGY ENGINE
 // ==========================================
 async function runAgentOrchestrator(userInstruction) {
+  // Clear indicator that the background thread successfully spawned
+  console.log(`[Engine Activation]: Initializing Pi Agent loop for prompt: "${userInstruction}"`);
+
   try {
-    // 1. Initialize the target model layer via Pi multi-provider system abstraction
-    // Map your local or remote instance endpoint cleanly
     const model = getModel('openai', {
-      baseURL: 'https://ollama.com/api/chat',
-      apiKey: process.env.OLLAMA_API_KEY,
+      baseURL: 'http://localhost:11434/v1', 
+      apiKey: process.env.OLLAMA_API_KEY || 'ollama',
       defaultModel: 'gemma4:31b'
     });
 
-    // 2. Instantiating the official Pi structural Agent block
+    console.log(`[Engine Activation]: Provider configured. Instantiating runtime state tree...`);
+
     const agent = new Agent({
       initialState: {
-        systemPrompt: 'You are an autonomous operations engineer. Execute tasks using available tools sequentially. If a task requires a tool you do not have, state clearly which tool is missing.',
+        systemPrompt: 'You are an autonomous operations engineer. Execute tasks using available tools sequentially.',
         model,
         tools: piToolsList
       }
     });
 
-    // 3. Setup dynamic subscription streams to watch what the agent is doing in real-time
+    // Track ALL raw lifecycle events to find out where things stall
     agent.subscribe(async (event) => {
-      // Pipeline these event states directly to MongoDB or print to console logs for debugging
+      console.log(`📡 [Pi Raw Event Stream]: Received type -> "${event.type}"`);
+
       if (event.type === 'tool_execution_start') {
-        console.log(`🔧 [Pi Engine State]: Using tool tool -> ${event.toolName}`);
+        console.log(`🔧 [Pi Tool Action]: Executing -> ${event.toolName}`);
       }
       
-      if (event.type === 'message_end' && event.message?.role === 'assistant') {
-        console.log(`[Pi Final Report Iteration]: ${event.message.content}`);
+      if (event.type === 'message_end') {
+        console.log(`📝 [Pi Turn Content]:`, event.message?.content);
       }
     });
 
-    // 4. Dispatch user instructions to the unified prompt thread engine handler loop
+    console.log(`[Engine Activation]: Subscriptions active. Dispatched prompt thread to LLM...`);
+    
     await agent.prompt(userInstruction);
+    
+    console.log(`[Engine Success]: Pi Agent has successfully concluded the entire execution path.`);
 
   } catch (error) {
-    console.error('❌ Pi Agent Core Error Intercepted:', error.message);
+    // This will catch target connection failures instantly
+    console.error('❌ CRITICAL: Pi Agent Core Error Intercepted:', error.stack);
   }
 }
 
