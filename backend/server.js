@@ -34,13 +34,30 @@ const fetchExternalApiTool = {
 const writeToDatabaseTool = {
   name: 'write_to_database',
   description: 'Store or update data records inside the database repository.',
-  execute: async (_toolCallId, args) => {
-    console.log(`Executing Pi Tool [write_to_database] under classification: ${args.targetCollection}`);
-    const newRecord = new DataLog({ collectionName: args.targetCollection, payload: args.dataObject });
-    const savedDoc = await newRecord.save();
-    return { 
-      content: [{ type: "text", text: JSON.stringify({ success: true, id: savedDoc._id }) }] 
-    };
+  // Pi utilizes TypeBox / JSON Schema syntax to evaluate and bind tools safely
+  parameters: {
+    type: 'object',
+    properties: {
+      targetCollection: { type: 'string', description: 'Name classification of the data collection (e.g. mock_users)' },
+      dataObject: { type: 'object', description: 'The JSON payload dictionary containing user information to store' }
+    },
+    required: ['targetCollection', 'dataObject']
+  },
+  // Ensure the execution hook captures parameters exactly as Pi streams them
+  execute: async (args) => {
+    const { targetCollection, dataObject } = args;
+    console.log(`⚡ [Pi Executor Callback]: Writing to MongoDB -> ${targetCollection}`);
+    
+    try {
+      const newRecord = new DataLog({ 
+        collectionName: targetCollection, 
+        payload: dataObject 
+      });
+      const savedDoc = await newRecord.save();
+      return `Success: Saved document to ${targetCollection} under reference ID: ${savedDoc._id}`;
+    } catch (err) {
+      return `Database Write Failure: ${err.message}`;
+    }
   }
 };
 
