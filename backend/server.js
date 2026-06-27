@@ -103,19 +103,19 @@ async function runAgentOrchestrator(userInstruction) {
   console.log(`[Engine Activation]: Initializing Pi Agent loop for prompt: "${userInstruction}"`);
 
   try {
-    const model = getModel('openai', {
-      baseURL: 'http://localhost:11434/v1', 
-      apiKey: process.env.OLLAMA_API_KEY || 'ollama',
-      defaultModel: 'gemma4:31b'
-    });
-
+    const model = getModel('ollama', 'gemma4:31b', {
+  baseURL: 'https://ollama.com', // The SDK appends /api/chat natively underneath
+  headers: {
+    'Authorization': `Bearer ${process.env.OLLAMA_API_KEY}`
+  }
+});
     console.log(`[Engine Activation]: Provider configured. Instantiating runtime state tree...`);
 
     const agent = new Agent({
+      model,
+      tools: piToolsList,
       initialState: {
         systemPrompt: 'You are an autonomous operations engineer. Execute tasks using available tools sequentially.',
-        model,
-        tools: piToolsList
       }
     });
 
