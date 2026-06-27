@@ -1,15 +1,13 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-// Import the core Pi SDK components
 import { Agent } from '@mariozechner/pi-agent-core';
-import { getModel } from '@mariozechner/pi-ai';
+import { Ollama } from 'ollama'; // <-- use the official ollama npm package directly
 
 dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Dynamic schema that can accept any shape of object data saved by the agent
 const DataLogSchema = new mongoose.Schema({
   collectionName: String,
   payload: mongoose.Schema.Types.Mixed,
@@ -17,9 +15,6 @@ const DataLogSchema = new mongoose.Schema({
 });
 const DataLog = mongoose.model('DataLog', DataLogSchema);
 
-// ==========================================
-// 1. PI AGENT CUSTOM TOOLS CONFIGURATION
-// ==========================================
 // ==========================================
 // 1. PI AGENT CUSTOM TOOLS CONFIGURATION
 // ==========================================
@@ -92,67 +87,80 @@ const readLatestDatabaseEntryTool = {
   }
 };
 
-// Assemble tools list array for the core configuration setup
 const piToolsList = [fetchExternalApiTool, writeToDatabaseTool, readLatestDatabaseEntryTool];
 
 // ==========================================
-// 2. THE PI RUNTIME STRATEGY ENGINE
+// 2. OLLAMA CLOUD CLIENT SETUP
+// ==========================================
+// Directly instantiate the official Ollama client pointed at the cloud API
+const ollamaClient = new Ollama({
+  host: 'https://ollama.com',
+  headers: {
+    Authorization: 'Bearer ' + process.env.OLLAMA_API_KEY
+  }
+});
+
+// Build a model adapter that Pi Agent's Agent class can consume.
+// Pi expects an object with a `complete` (or equivalent) method that
+// accepts messages and returns a standard response. We wrap ollamaClient here.
+const ollamaModel = {
+  // Pi Agent core calls this internally when it needs a completion
+  complete: async ({ messages, tools }) => {
+    const response = await ollamaClient.chat({
+      model: process.env.OLLAMA_MODEL || 'gemma4:31b', // set in your .env
+      messages,
+      tools: tools ?? [],
+      stream: false
+    });
+    return response; // ollama returns { message: { role, content, tool_calls? } }
+  }
+};
+
+// ==========================================
+// 3. THE PI RUNTIME STRATEGY ENGINE
 // ==========================================
 async function runAgentOrchestrator(userInstruction) {
-  // Clear indicator that the background thread successfully spawned
   console.log(`[Engine Activation]: Initializing Pi Agent loop for prompt: "${userInstruction}"`);
 
   try {
-    const model = getModel('ollama', 'gemma4:31b', {
-  baseURL: 'https://ollama.com', // The SDK appends /api/chat natively underneath
-  headers: {
-    'Authorization': `Bearer ${process.env.OLLAMA_API_KEY}`
-  }
-});
-    console.log(`[Engine Activation]: Provider configured. Instantiating runtime state tree...`);
-
     const agent = new Agent({
-      model,
+      model: ollamaModel,
       tools: piToolsList,
       initialState: {
         systemPrompt: 'You are an autonomous operations engineer. Execute tasks using available tools sequentially.',
       }
     });
 
-    // Track ALL raw lifecycle events to find out where things stall
     agent.subscribe(async (event) => {
       console.log(`📡 [Pi Raw Event Stream]: Received type -> "${event.type}"`);
 
       if (event.type === 'tool_execution_start') {
         console.log(`🔧 [Pi Tool Action]: Executing -> ${event.toolName}`);
       }
-      
+
       if (event.type === 'message_end') {
         console.log(`📝 [Pi Turn Content]:`, event.message?.content);
       }
     });
 
     console.log(`[Engine Activation]: Subscriptions active. Dispatched prompt thread to LLM...`);
-    
-    await agent.prompt(userInstruction);
-    
-    console.log(`[Engine Success]: Pi Agent has successfully concluded the entire execution path.`);
 
+    await agent.prompt(userInstruction);
+
+    console.log(`[Engine Success]: Pi Agent has successfully concluded the entire execution path.`);
   } catch (error) {
-    // This will catch target connection failures instantly
     console.error('❌ CRITICAL: Pi Agent Core Error Intercepted:', error.stack);
   }
 }
 
 // ==========================================
-// 3. UNIVERSAL ENDPOINT
+// 4. UNIVERSAL ENDPOINT
 // ==========================================
 app.post('/run-instruction', (req, res) => {
   const instruction = req.body.instruction;
-  
+
   res.status(200).json({ status: "accepted", message: "Instruction accepted. Pi Agent processing started." });
-  
-  // Hand control over to the unified Pi agent framework run system
+
   runAgentOrchestrator(instruction);
 });
 
