@@ -121,6 +121,8 @@ async function runAgentOrchestrator(userInstruction) {
     };
 
     agent.subscribe(async (event) => {
+      // Ignore the individual token stream ticks to keep server logs clean
+      if (event.type === 'message_update') return;
       console.log(`📡 [Pi Raw Event Stream]: Received type -> "${event.type}"`);
       if (event.type === 'tool_execution_start') {
         console.log(`🔧 [Pi Tool Action]: Executing -> ${event.toolName}`);
