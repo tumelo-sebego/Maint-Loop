@@ -1,82 +1,19 @@
+// server.js
 import express from 'express';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { Agent } from '@mariozechner/pi-agent-core';
 import { streamSimple } from '@mariozechner/pi-ai';
-import { Type } from '@mariozechner/pi-ai';
+
+// Clean imports from our new modular file
+import { piToolsList, coreSystemInstruction } from './tools.js';
 
 dotenv.config();
 const app = express();
 app.use(express.json());
 
-const DataLogSchema = new mongoose.Schema({
-  collectionName: String,
-  payload: mongoose.Schema.Types.Mixed,
-  timestamp: { type: Date, default: Date.now }
-});
-const DataLog = mongoose.model('DataLog', DataLogSchema);
-
 // ==========================================
-// 1. TOOLS
-// ==========================================
-const fetchExternalApiTool = {
-  name: 'fetch_external_api',
-  label: 'Fetch External API',
-  description: 'Fetch raw data from any public HTTP API endpoint URL.',
-  parameters: Type.Object({
-    url: Type.String({ description: 'The complete endpoint URL to request data from' })
-  }),
-  execute: async (_toolCallId, args) => {
-    console.log(`Executing Pi Tool [fetch_external_api] for: ${args.url}`);
-    try {
-      const res = await fetch(args.url);
-      return { content: [{ type: 'text', text: await res.text() }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: `API Fetch Error: ${err.message}` }] };
-    }
-  }
-};
-
-const writeToDatabaseTool = {
-  name: 'write_to_database',
-  label: 'Write to Database',
-  description: 'Store or update data records inside the database.',
-  parameters: Type.Object({
-    targetCollection: Type.String({ description: 'Name of the data collection e.g. mock_users' }),
-    dataObject: Type.Object({}, { description: 'The JSON payload to store', additionalProperties: true })
-  }),
-  execute: async (_toolCallId, args) => {
-    const { targetCollection, dataObject } = args;
-    console.log(`⚡ [Pi Executor]: Writing to MongoDB -> ${targetCollection}`);
-    try {
-      const savedDoc = await new DataLog({ collectionName: targetCollection, payload: dataObject }).save();
-      return { content: [{ type: 'text', text: `Success: Saved to ${targetCollection}, ID: ${savedDoc._id}` }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: `Database Write Failure: ${err.message}` }] };
-    }
-  }
-};
-
-const readLatestDatabaseEntryTool = {
-  name: 'read_latest_database_entry',
-  label: 'Read Latest Database Entry',
-  description: 'Query the most recent record in a collection.',
-  parameters: Type.Object({
-    targetCollection: Type.String({ description: 'Name of the targeted database collection' })
-  }),
-  execute: async (_toolCallId, args) => {
-    console.log(`Executing Pi Tool [read_latest_database_entry] for: ${args.targetCollection}`);
-    try {
-      const latest = await DataLog.findOne({ collectionName: args.targetCollection }).sort({ timestamp: -1 });
-      return { content: [{ type: 'text', text: latest ? JSON.stringify(latest.payload) : JSON.stringify({ message: 'No records found.' }) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: `Database Read Failure: ${err.message}` }] };
-    }
-  }
-};
-
-// ==========================================
-// 2. OLLAMA CLOUD MODEL DEFINITION
+// OLLAMA CLOUD MODEL REFERENCE BLOCK
 // ==========================================
 const ollamaCloudModel = {
   id: process.env.OLLAMA_MODEL || 'gemma4:27b',
@@ -92,7 +29,7 @@ const ollamaCloudModel = {
 };
 
 // ==========================================
-// 3. AGENT ENGINE
+// AGENT ORCHESTRATOR RUNTIME RUNNER
 // ==========================================
 async function runAgentOrchestrator(userInstruction) {
   console.log(`[Engine Activation]: Initializing Pi Agent loop for prompt: "${userInstruction}"`);
@@ -101,29 +38,30 @@ async function runAgentOrchestrator(userInstruction) {
     const agent = new Agent({
       initialState: {
         model: ollamaCloudModel,
-        systemPrompt: 'You are an autonomous operations engineer. Execute tasks using available tools sequentially. Always use tools to complete tasks - never just describe what you would do.',
-        tools: [fetchExternalApiTool, writeToDatabaseTool, readLatestDatabaseEntryTool],
+        systemPrompt: coreSystemInstruction, // Bound from module
+        tools: piToolsList,                  // Bound from module
         messages: [],
       }
     });
 
-    // KEY FIX: Override streamFn to explicitly pass the API key and auth header.
-    // Without this, pi-ai cannot resolve the key for custom providers and sends
-    // unauthenticated requests, getting back empty responses silently.
+    // The interceptor override fix that resolved the authentication layer
     agent.streamFn = (model, context, options) => {
       return streamSimple(model, context, {
         ...options,
-        apiKey: process.env.OLLAMA_API_KEY,  // explicitly inject the key
+        apiKey: process.env.OLLAMA_API_KEY,
         headers: {
           'Authorization': `Bearer ${process.env.OLLAMA_API_KEY}`
         }
       });
     };
 
+    // Keep active operational terminal streaming active
     agent.subscribe(async (event) => {
-      // Ignore the individual token stream ticks to keep server logs clean
+      // Ignore noisy token-by-token update strings to keep server output legible
       if (event.type === 'message_update') return;
+
       console.log(`📡 [Pi Raw Event Stream]: Received type -> "${event.type}"`);
+      
       if (event.type === 'tool_execution_start') {
         console.log(`🔧 [Pi Tool Action]: Executing -> ${event.toolName}`);
       }
@@ -132,17 +70,17 @@ async function runAgentOrchestrator(userInstruction) {
       }
     });
 
-    console.log(`[Engine Activation]: Subscriptions active. Dispatching to LLM...`);
+    console.log(`[Engine Activation]: Routing payload pipeline to cloud provider...`);
     await agent.prompt(userInstruction);
-    console.log(`[Engine Success]: Pi Agent concluded execution.`);
+    console.log(`[Engine Success]: Pi Agent concluded execution cycle.`);
 
   } catch (error) {
-    console.error('❌ CRITICAL: Pi Agent Core Error:', error.stack);
+    console.error('❌ CRITICAL: Pi Agent Core Error Stack:', error.stack);
   }
 }
 
 // ==========================================
-// 4. ENDPOINT
+// UNIVERSAL API ENDPOINT
 // ==========================================
 app.post('/run-instruction', (req, res) => {
   const instruction = req.body.instruction;
@@ -150,6 +88,7 @@ app.post('/run-instruction', (req, res) => {
   runAgentOrchestrator(instruction);
 });
 
+// Database Connectivity Initialization Hook
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => app.listen(3000, () => console.log('Server running on port 3000')))
   .catch(err => console.error(err));
